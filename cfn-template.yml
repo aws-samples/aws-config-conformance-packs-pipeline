@@ -1,0 +1,430 @@
+##
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+##
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  This AWS CloudFormation template creates required resources to deploy AWS Config custom or managed rules 
+  and conformance packs templates.
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterLabels:
+      ComplianceTopicName:
+        default: CodeCommit Repository Name
+      RDKLibLayerArn:
+        default: RDKlib Layer ARN
+
+
+Parameters:
+  ComplianceTopicName:
+    Type: String
+    Default: "conforms-packs"
+    ConstraintDescription: Must be less than 20 characters.
+    MaxLength: 19
+  RDKLibLayerArn:
+    Type: String
+    Default: ""
+    Description: ARN of the RDKlib layer
+Resources:
+  ## Service role used for the CodeBuild project
+  CodeBuildServiceRole:
+    Type: "AWS::IAM::Role"
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Prerequisites for the RDK. Please see: https://github.com/awslabs/aws-config-rdk/blob/master/policy/rdk-minimum-permissions.json"
+
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "allowKMS"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "kms:Encrypt"
+                  - "kms:Decrypt"
+                  - "kms:ReEncrypt*"
+                  - "kms:GenerateDataKey*"
+                  - "kms:DescribeKey"
+                  - "kms:CreateGrant"
+                Resource: !GetAtt PipelineCMK.Arn
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Resource:
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/compliance-topic-${ComplianceTopicName}-functions/*"
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+              - Resource:
+                  - "*"
+                Effect: Allow
+                Action:
+                  - "cloudformation:ListStacks"
+              - Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/rdk/*
+                Effect: Allow
+                Action:
+                  - "iam:PassRole"
+                  - "iam:PutRolePolicy"
+                  - "iam:AttachRolePolicy"
+                  - "iam:CreateRole"
+                  - "iam:DeleteRole"
+                  - "iam:DetachRolePolicy"
+                  - "iam:DeleteRolePolicy"
+              - Resource:
+                  - "*"
+                Effect: Allow
+                Action:
+                  - "iam:Get*"
+                  - "iam:List*"
+                  - "iam:GetRole"
+              - Resource:
+                  - "*"
+                Effect: Allow
+                Action:
+                  - "lambda:AddPermission"
+                  - "lambda:CreateFunction"
+                  - "lambda:CreateEventSourceMapping"
+                  - "lambda:DeleteFunction"
+                  - "lambda:RemovePermission"
+                  - "lambda:UpdateFunctionConfiguration"
+                  - "lambda:UpdateFunctionCode"
+                  - "lambda:PublishVersion"
+                  - "lambda:Get*"
+                  - "lambda:List*"
+              - Resource:
+                  - "*"
+                Effect: Allow
+                Action:
+                  - "organizations:ListDelegatedAdministrators"
+                  - "organizations:EnableAWSServiceAccess"
+                  - "config:PutOrganizationConformancePack"
+                  - "config:DeleteOrganizationConformancePack"
+                  - "config:DescribeOrganizationConformancePacks"
+                  - "config:DescribeOrganizationConformancePackStatuses"
+                  - "config:GetOrganizationConformancePackDetailedStatus"
+              - Resource:
+                  - !Sub "arn:aws:s3:::${ArtifactBucket}/*"
+                Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "s3:GetObjectVersion"
+              - Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ComplianceTopicName}-Build
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ComplianceTopicName}-Build:*
+                Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+  ## Service role used for CodePipeline
+  CodePipelineServiceRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "allowKMS"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "kms:Encrypt"
+                  - "kms:Decrypt"
+                  - "kms:ReEncrypt*"
+                  - "kms:GenerateDataKey*"
+                  - "kms:DescribeKey"
+                  - "kms:CreateGrant"
+                Resource: !GetAtt PipelineCMK.Arn
+        - PolicyName: CodePipelinePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource:
+                  - !Sub "arn:aws:s3:::${ArtifactBucket}/*"
+                  - !Sub "arn:aws:s3:::${ArtifactBucket}"
+                Effect: Allow
+                Action:
+                  - "s3:PutObject"
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:GetBucketVersioning"
+                  - "s3:ListBucket"
+              - Resource: !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepository.Name}
+                Effect: Allow
+                Action:
+                  - "codecommit:GetBranch"
+                  - "codecommit:GetCommit"
+                  - "codecommit:UploadArchive"
+                  - "codecommit:GetUploadArchiveStatus"
+                  - "codecommit:CancelUploadArchive"
+              - Resource:
+                  - !GetAtt CDActionBuild.Arn
+                Effect: Allow
+                Action:
+                  - "codebuild:StartBuild"
+                  - "codebuild:BatchGetBuilds"
+              
+  ## Service role used for CloudWatch events
+  CloudWatchEventRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: !Sub "start-pipeline-${AWS::StackName}"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource:
+                  - !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${CodePipeline}
+                Effect: Allow
+                Action:
+                  - "codepipeline:StartPipelineExecution"
+  #####################
+  # CloudWatch Events
+  #####################
+  # CloudWatch events
+  CodePipelineTrigger:
+    Type: "AWS::Events::Rule"
+    Properties:
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Repository State Change
+        resources:
+          - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${ComplianceTopicName}
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - main
+      Targets:
+        - Id: !Sub "${CodePipeline}"
+          RoleArn: !GetAtt CloudWatchEventRole.Arn
+          Arn: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${CodePipeline}
+  # S3
+  ArtifactBucket:
+    Type: "AWS::S3::Bucket"
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W51
+            reason: "Access intended only within the same account"
+    Properties:
+      AccessControl: Private
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LoggingBucket
+      PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  LoggingBucket:
+    Type: 'AWS::S3::Bucket'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W51
+            reason: "Access intended only within the same account"
+          - id: W35
+            reason: "This is a S3 bucket to store access logs from ArtifactBucket."
+    Properties:
+      AccessControl: LogDeliveryWrite
+      PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # KMS
+  PipelineCMK:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: "Pipeline key"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: "key-default-1"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+  KMSAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/pipeline-compliance-${ComplianceTopicName}
+      TargetKeyId: !Ref PipelineCMK
+  # CodeCommit
+  CodeCommitRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref ComplianceTopicName
+  #####################
+  # CodeBuild
+  #####################
+  # Deploy action
+  CDActionBuild:
+    Type: "AWS::CodeBuild::Project"
+    DependsOn: KMSAlias
+    Properties:
+      Name: !Sub "${ComplianceTopicName}-Build"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Packaging: NONE
+        Type: CODEPIPELINE
+        Name: !Sub "${AWS::StackName}-Build"
+      TimeoutInMinutes: 60
+      Environment:
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        PrivilegedMode: true
+        Image: "aws/codebuild/standard:4.0"
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: DELIVERY_S3_BUCKET
+            Value: !Ref ArtifactBucket
+          - Name: TOPIC_NAME
+            Value: !Ref ComplianceTopicName
+          - Name: ACCOUNT_ID
+            Value: !Sub "${AWS::AccountId}"
+          - Name: RDKLIB_LAYER_ARN
+            Value: !Ref RDKLibLayerArn
+      EncryptionKey: !Sub alias/pipeline-compliance-${ComplianceTopicName}
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - aws --version
+                - pip uninstall awscli -y
+                - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.1.21.zip" -o "awscliv2.zip"
+                - unzip awscliv2.zip
+                - ./aws/install
+                - aws --version
+                - pip install rdk
+                - |
+                  if [ -f "requirements.txt" ]; then
+                    pip install -r requirements.txt
+                  fi
+            build:
+              commands:
+                - set -e
+                - rdk deploy --all --functions-only --custom-code-bucket ${DELIVERY_S3_BUCKET} --stack-name compliance-topic-${TOPIC_NAME}-functions --rdklib-layer-arn ${RDKLIB_LAYER_ARN}
+                - rdk create-rule-template --rules-only -a -o custom-conforms-pack-template.json
+                - python -c 'import sys, yaml, json; print(yaml.dump(json.loads(sys.stdin.read())))' < custom-conforms-pack-template.json > custom-conforms-pack-template.yaml
+                - |
+                  for file in *.yaml
+                  do
+                  if [ $file = "custom-conforms-pack-template.yaml" ]; then
+                    aws configservice put-organization-conformance-pack --organization-conformance-pack-name ${TOPIC_NAME}-custom  --template-body file://./custom-conforms-pack-template.yaml  --conformance-pack-input-parameters ParameterName=LambdaAccountId,ParameterValue=${ACCOUNT_ID}
+                  else
+                    base_name=$(basename $file .yaml)
+                    aws configservice put-organization-conformance-pack --organization-conformance-pack-name $base_name  --template-body file://$file
+                  fi
+                  done
+
+  CodePipeline:
+    Type: "AWS::CodePipeline::Pipeline"
+    Properties:
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      Name: !Sub ${ComplianceTopicName}-main
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+        EncryptionKey:
+          Id: !Sub alias/pipeline-compliance-${ComplianceTopicName}
+          Type: KMS
+      Stages:
+        - Name: Source
+          Actions:
+            - InputArtifacts: []
+              Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: "1"
+                Provider: CodeCommit
+              OutputArtifacts:
+                - Name: !Sub "${AWS::StackName}Source"
+              Configuration:
+                PollForSourceChanges: "false"
+                BranchName: main
+                RepositoryName: !Ref ComplianceTopicName
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - InputArtifacts:
+                - Name: !Sub "${AWS::StackName}Source"
+              Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: "1"
+                Provider: CodeBuild
+              OutputArtifacts:
+                - Name: !Sub "${AWS::StackName}Build"
+              Configuration:
+                ProjectName: !Sub ${ComplianceTopicName}-Build
+              RunOrder: 1
