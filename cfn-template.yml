@@ -263,6 +263,8 @@ Resources:
             reason: "Access intended only within the same account"
     Properties:
       AccessControl: Private
+      VersioningConfiguration:
+        Status: Enabled
       LoggingConfiguration:
         DestinationBucketName: !Ref LoggingBucket
       PublicAccessBlockConfiguration:
@@ -285,6 +287,8 @@ Resources:
             reason: "This is a S3 bucket to store access logs from ArtifactBucket."
     Properties:
       AccessControl: LogDeliveryWrite
+      VersioningConfiguration:
+        Status: Enabled
       PublicAccessBlockConfiguration:
           BlockPublicAcls: true
           BlockPublicPolicy: true
