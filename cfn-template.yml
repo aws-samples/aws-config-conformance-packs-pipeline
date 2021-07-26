@@ -102,6 +102,11 @@ Resources:
                   - "iam:DetachRolePolicy"
                   - "iam:DeleteRolePolicy"
               - Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/config-conforms.amazonaws.com/AWSServiceRoleForConfigConforms
+                Effect: Allow
+                Action:
+                  - "iam:CreateServiceLinkedRole"
+              - Resource:
                   - "*"
                 Effect: Allow
                 Action:
