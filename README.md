@@ -105,16 +105,17 @@ You have now deployed the AWS Config conformance packs. You should be able to se
 
 ## Cleanup
 To avoid incurring additional charges in your account, run the following commands in the management account or the delegated admin account to remove the resources you created:
-```
-# Delete all conformance packs deployed
+
+1. Delete all conformance packs deployed
+```Bash
 aws configservice delete-organization-conformance-pack
 --organization-conformance-pack-name <value>
+```
 
-# Delete all objects created in the S3 bucket used to store CodePipeline artifacts and the S3 logging bucket
-aws s3 rm s3://<bucket_name>/ --recursive
-aws s3 rm s3://<s3_logging_bucket_name>/ --recursive
+2. Empty all S3 buckets used to store CodePipeline artifacts and the S3 logging bucket.
 
-# Delete the AWS CloudFormation stack
+3. Delete the AWS CloudFormation stack
+```Bash
 aws cloudformation delete-stack --stack-name org-conformance-packs-pipeline
 ```
 
