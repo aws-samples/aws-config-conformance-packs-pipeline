@@ -49,11 +49,8 @@ git clone https://github.com/aws-samples/aws-config-conformance-packs-pipeline
 ```
 cd aws-config-conformance-packs-pipeline
 ```
-3. Deploy the AWS CloudFormation template `cfn-template.yml` by following the AWS documentation : [Creating a stack on the AWS CloudFormation console](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stack.html) or : 
-```
-aws cloudformation deploy --template-file cfn-template.yml --stack-name pipeline --capabilities CAPABILITY_NAMED_IAM
-```
-4. Create an IAM role for the Lambda function to verify rule compliance on every account. For simplicity, we included a CloudFormation template (`rdk-role.yml`) that can be deployed as a stackset on all the accounts that you want to monitor. To deploy the stackset using the method described in this post, enable trusted access with AWS Organizations for AWS CloudFormation StackSets. You can also deploy the stackset using self-managed permissions, but you will need to adapt the following commands accordingly.
+
+3. Create an IAM role for the Lambda function to verify rule compliance on every account. For simplicity, we included a CloudFormation template (`rdk-role.yml`) that can be deployed as a stackset on all the accounts that you want to monitor. To deploy the stackset using the method described in this post, enable trusted access with AWS Organizations for AWS CloudFormation StackSets. You can also deploy the stackset using self-managed permissions, but you will need to adapt the following commands accordingly.
    * Set up your AWS credentials. Replace `<ManagementAccountId>` with the ID of your management account and `<OrganizationalUnitId>` with the value from step 6 in the “Prerequisites” section.
 ```
 # Deploy the IAM role used by the RDK Lambda function
@@ -61,7 +58,7 @@ aws cloudformation create-stack-set --stack-set-name RDKLambdaRole --template-bo
 
 aws cloudformation create-stack-instances --stack-set-name RDKLambdaRole --regions eu-west-1 --deployment-targets OrganizationalUnitIds=<OrganizationalUnitId>
 ```
-5. Deploy the pipeline. For `<RDKlibLayerArn>`, use the value from step 4 of the “Prerequisites” section.
+4. Deploy the pipeline. For `<RDKlibLayerArn>`, use the value from step 4 of the “Prerequisites” section.
 ```
 aws cloudformation deploy --template-file cfn-template.yml --stack-name org-conformance-packs-pipeline --parameter-overrides RDKlibLayerArn=<RDKlibLayerArn> --capabilities CAPABILITY_NAMED_IAM
 ```

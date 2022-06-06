@@ -20,24 +20,21 @@ Description: >-
   This AWS CloudFormation template creates required resources to deploy AWS Config custom or managed rules 
   and conformance packs templates.
 
-Metadata:
-  'AWS::CloudFormation::Interface':
-    ParameterLabels:
-      ComplianceTopicName:
-        default: CodeCommit Repository Name
-      RDKlibLayerArn:
-        default: RDKlib Layer ARN
-
-
 Parameters:
   ComplianceTopicName:
     Type: String
-    Default: "conforms-packs"
+    Default: "grc353"
     ConstraintDescription: Must be less than 20 characters.
     MaxLength: 19
-  RDKlibLayerArn:
+  RDKLibLayerArnUsEast1:
     Type: String
-    Description: ARN of the RDKlib layer
+    Description: ARN of the RDKlib layer in US East (N. Virginia).
+  RDKLibLayerArnUsWest2:
+    Type: String
+    Description: ARN of the RDKlib layer in US West (Oregon).
+  ArtifactBucket2ndRegion:
+    Type: String
+    Description: Name of the S3 bucket in US West (Oregon).
 Resources:
   ## Service role used for the CodeBuild project
   CodeBuildServiceRole:
@@ -77,7 +74,7 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Resource:
-                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/compliance-topic-${ComplianceTopicName}-functions/*"
+                  - !Sub "arn:aws:cloudformation:*:${AWS::AccountId}:stack/compliance-topic-${ComplianceTopicName}-functions/*"
                 Effect: Allow
                 Action:
                   - cloudformation:DescribeStacks
@@ -137,16 +134,21 @@ Resources:
                   - "config:DescribeOrganizationConformancePacks"
                   - "config:DescribeOrganizationConformancePackStatuses"
                   - "config:GetOrganizationConformancePackDetailedStatus"
+                  - "config:PutConformancePack"
+                  - "config:DeleteConformancePack"
+                  - "config:DescribeConformancePacks"
+                  - "config:DescribeConformancePackStatuses"
+                  - "config:GetConformancePackDetailedStatus"
               - Resource:
                   - !Sub "arn:aws:s3:::${ArtifactBucket}/*"
+                  - !Sub "arn:aws:s3:::${ArtifactBucket2ndRegion}/*"
                 Effect: Allow
                 Action:
                   - "s3:GetObject"
                   - "s3:PutObject"
                   - "s3:GetObjectVersion"
               - Resource:
-                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ComplianceTopicName}-Build
-                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ComplianceTopicName}-Build:*
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ComplianceTopicName}-Build*
                 Effect: Allow
                 Action:
                   - "logs:CreateLogGroup"
@@ -203,6 +205,7 @@ Resources:
                   - "codecommit:CancelUploadArchive"
               - Resource:
                   - !GetAtt CDActionBuild.Arn
+                  - !GetAtt CDActionBuild2ndRegion.Arn
                 Effect: Allow
                 Action:
                   - "codebuild:StartBuild"
@@ -302,6 +305,7 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+  
 
   # KMS
   PipelineCMK:
@@ -355,8 +359,10 @@ Resources:
             Value: !Ref ComplianceTopicName
           - Name: ACCOUNT_ID
             Value: !Sub "${AWS::AccountId}"
-          - Name: RDKLIB_LAYER_ARN
-            Value: !Ref RDKlibLayerArn
+          - Name: RDKLIB_LAYER_ARN_US_EAST_1
+            Value: !Ref RDKLibLayerArnUsEast1
+          - Name: RDKLIB_LAYER_ARN_US_WEST_2
+            Value: !Ref RDKLibLayerArnUsWest2
       EncryptionKey: !Sub alias/pipeline-compliance-${ComplianceTopicName}
       Source:
         Type: CODEPIPELINE
@@ -379,17 +385,80 @@ Resources:
             build:
               commands:
                 - set -e
-                - rdk deploy --all --functions-only --custom-code-bucket ${DELIVERY_S3_BUCKET} --stack-name compliance-topic-${TOPIC_NAME}-functions --rdklib-layer-arn ${RDKLIB_LAYER_ARN}
+                - rdk deploy --all --functions-only --custom-code-bucket ${DELIVERY_S3_BUCKET} --stack-name compliance-topic-${TOPIC_NAME}-functions --rdklib-layer-arn ${RDKLIB_LAYER_ARN_US_EAST_1} 
                 - rdk create-rule-template --rules-only -a -o custom-conforms-pack-template.json
                 - python -c 'import sys, yaml, json; print(yaml.dump(json.loads(sys.stdin.read())))' < custom-conforms-pack-template.json > custom-conforms-pack-template.yaml
                 - |
                   for file in *.yaml
                   do
                   if [ $file = "custom-conforms-pack-template.yaml" ]; then
-                    aws configservice put-organization-conformance-pack --organization-conformance-pack-name ${TOPIC_NAME}-custom  --template-body file://./custom-conforms-pack-template.yaml  --conformance-pack-input-parameters ParameterName=LambdaAccountId,ParameterValue=${ACCOUNT_ID}
+                    aws configservice put-conformance-pack --conformance-pack-name ${TOPIC_NAME}-custom  --template-body file://./custom-conforms-pack-template.yaml  --conformance-pack-input-parameters ParameterName=LambdaAccountId,ParameterValue=${ACCOUNT_ID} --region us-east-1
                   else
                     base_name=$(basename $file .yaml)
-                    aws configservice put-organization-conformance-pack --organization-conformance-pack-name $base_name  --template-body file://$file
+                    aws configservice put-conformance-pack --conformance-pack-name $base_name  --template-body file://$file --region us-east-1
+                  fi
+                  done
+
+  CDActionBuild2ndRegion:
+    Type: "AWS::CodeBuild::Project"
+    DependsOn: KMSAlias
+    Properties:
+      Name: !Sub "${ComplianceTopicName}-Build2ndRegion"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Packaging: NONE
+        Type: CODEPIPELINE
+        Name: !Sub "${AWS::StackName}-Build2ndRegion"
+      TimeoutInMinutes: 60
+      Environment:
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        PrivilegedMode: true
+        Image: "aws/codebuild/standard:4.0"
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: DELIVERY_S3_BUCKET
+            Value: !Ref ArtifactBucket2ndRegion
+          - Name: TOPIC_NAME
+            Value: !Ref ComplianceTopicName
+          - Name: ACCOUNT_ID
+            Value: !Sub "${AWS::AccountId}"
+          - Name: RDKLIB_LAYER_ARN_US_EAST_1
+            Value: !Ref RDKLibLayerArnUsEast1
+          - Name: RDKLIB_LAYER_ARN_US_WEST_2
+            Value: !Ref RDKLibLayerArnUsWest2
+      EncryptionKey: !Sub alias/pipeline-compliance-${ComplianceTopicName}
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - aws --version
+                - pip uninstall awscli -y
+                - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.1.21.zip" -o "awscliv2.zip"
+                - unzip awscliv2.zip
+                - ./aws/install
+                - aws --version
+                - pip install rdk
+                - |
+                  if [ -f "requirements.txt" ]; then
+                    pip install -r requirements.txt
+                  fi
+            build:
+              commands:
+                - set -e
+                - rdk -r us-west-2 deploy --all --functions-only --custom-code-bucket ${DELIVERY_S3_BUCKET} --stack-name compliance-topic-${TOPIC_NAME}-functions --rdklib-layer-arn ${RDKLIB_LAYER_ARN_US_WEST_2}
+                - rdk create-rule-template --rules-only -a -o custom-conforms-pack-template.json
+                - python -c 'import sys, yaml, json; print(yaml.dump(json.loads(sys.stdin.read())))' < custom-conforms-pack-template.json > custom-conforms-pack-template.yaml
+                - |
+                  for file in *.yaml
+                  do
+                  if [ $file = "custom-conforms-pack-template.yaml" ]; then
+                    aws configservice put-conformance-pack --conformance-pack-name ${TOPIC_NAME}-custom  --template-body file://./custom-conforms-pack-template.yaml  --conformance-pack-input-parameters ParameterName=LambdaAccountId,ParameterValue=${ACCOUNT_ID} --region us-west-2
+                  else
+                    base_name=$(basename $file .yaml)
+                    aws configservice put-conformance-pack --conformance-pack-name $base_name  --template-body file://$file --region us-west-2
                   fi
                   done
 
@@ -435,4 +504,19 @@ Resources:
                 - Name: !Sub "${AWS::StackName}Build"
               Configuration:
                 ProjectName: !Sub ${ComplianceTopicName}-Build
+              RunOrder: 1
+        - Name: Build2ndRegion
+          Actions:
+            - InputArtifacts:
+                - Name: !Sub "${AWS::StackName}Source"
+              Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: "1"
+                Provider: CodeBuild
+              OutputArtifacts:
+                - Name: !Sub "${AWS::StackName}Build2ndRegion"
+              Configuration:
+                ProjectName: !Sub ${ComplianceTopicName}-Build2ndRegion
               RunOrder: 1
