@@ -110,8 +110,9 @@ To avoid incurring additional charges in your account, run the following command
 aws configservice delete-organization-conformance-pack
 --organization-conformance-pack-name <value>
 
-# Delete all objects created in the S3 bucket used to store CodePipeline artifacts
+# Delete all objects created in the S3 bucket used to store CodePipeline artifacts and the S3 logging bucket
 aws s3 rm s3://<bucket_name>/ --recursive
+aws s3 rm s3://<s3_logging_bucket_name>/ --recursive
 
 # Delete the AWS CloudFormation stack
 aws cloudformation delete-stack --stack-name org-conformance-packs-pipeline
