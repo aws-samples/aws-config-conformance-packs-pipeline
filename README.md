@@ -114,7 +114,7 @@ aws configservice delete-organization-conformance-pack
 aws s3 rm s3://<bucket_name>/ --recursive
 
 # Delete the AWS CloudFormation stack
-aws cloudformation delete --stack-name org-conformance-packs-pipeline
+aws cloudformation delete-stack --stack-name org-conformance-packs-pipeline
 ```
 
 Delete the resources you created as prerequisites for [deploying conformance packs across an organization](https://aws.amazon.com/blogs/mt/deploying-conformance-packs-across-an-organization-with-automatic-remediation/).
